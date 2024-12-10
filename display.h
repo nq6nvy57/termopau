@@ -1,3 +1,9 @@
+#ifndef DISPLAY_H
+#define DISPLAY_H
+
+#include <driver/gpio.h>
+#include <esp_log.h>
+
 #define SEG_A 25
 #define SEG_B 26
 #define SEG_C 27
@@ -5,9 +11,12 @@
 #define SEG_E 12
 #define SEG_F 13
 #define SEG_G 32
-#define SEG_DP 33 // opcional
-#define DISPLAY_1 16 // display para temperatura ajustada
-#define DISPLAY_2 17 // display para temperatura medida
+#define SEG_DP 33 // Optional
+#define DISPLAY_1 16
+#define DISPLAY_2 17
+
+#define DISPLAY_ON  1
+#define DISPLAY_OFF 0
 
 const uint8_t DIGITOS[10] = 
 {
@@ -22,29 +31,41 @@ const uint8_t DIGITOS[10] =
     0b1111111, // 8
     0b1101111  // 9
 };
-void init_7segment_pins(void) 
+
+/**
+ * @brief Initialize GPIO pins for dual 7-segment displays.
+ */
+void init_dual_displays(void) 
 {
-    gpio_pad_select_gpio(SEG_A); gpio_set_direction(SEG_A, GPIO_MODE_OUTPUT);
-    gpio_pad_select_gpio(SEG_B); gpio_set_direction(SEG_B, GPIO_MODE_OUTPUT);
-    gpio_pad_select_gpio(SEG_C); gpio_set_direction(SEG_C, GPIO_MODE_OUTPUT);
-    gpio_pad_select_gpio(SEG_D); gpio_set_direction(SEG_D, GPIO_MODE_OUTPUT);
-    gpio_pad_select_gpio(SEG_E); gpio_set_direction(SEG_E, GPIO_MODE_OUTPUT);
-    gpio_pad_select_gpio(SEG_F); gpio_set_direction(SEG_F, GPIO_MODE_OUTPUT);
-    gpio_pad_select_gpio(SEG_G); gpio_set_direction(SEG_G, GPIO_MODE_OUTPUT);
-    gpio_pad_select_gpio(SEG_DP); gpio_set_direction(SEG_DP, GPIO_MODE_OUTPUT);
-    gpio_pad_select_gpio(DISPLAY_1); gpio_set_direction(DISPLAY_1, GPIO_MODE_OUTPUT);
-    gpio_pad_select_gpio(DISPLAY_2); gpio_set_direction(DISPLAY_2, GPIO_MODE_OUTPUT);
+    const uint8_t pins[] = {SEG_A, SEG_B, SEG_C, SEG_D, SEG_E, SEG_F, SEG_G, SEG_DP, DISPLAY_1, DISPLAY_2};
+    for (int i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) 
+    {
+        gpio_pad_select_gpio(pins[i]);
+        gpio_set_direction(pins[i], GPIO_MODE_OUTPUT);
+    }
+    gpio_set_level(DISPLAY_1, DISPLAY_OFF);
+    gpio_set_level(DISPLAY_2, DISPLAY_OFF);
 }
 
-void set_display(uint8_t display, bool active) 
+/**
+ * @brief Set the state of a display (on or off).
+ * @param display Display identifier (DISPLAY_1 or DISPLAY_2).
+ * @param state True for on, false for off.
+ */
+void set_display_state(uint8_t display, bool state) 
 {
-    gpio_set_level(display, active ? 1 : 0);
+    if (display == DISPLAY_1 || display == DISPLAY_2) 
+    {
+        gpio_set_level(display, state ? DISPLAY_ON : DISPLAY_OFF);
+    }
 }
 
-void show_number_on_display(uint8_t number) 
+/**
+ * @brief Set the segments of a 7-segment display based on a bitmask.
+ * @param segments Bitmask representing the active segments.
+ */
+void set_segments(uint8_t segments) 
 {
-    if (number > 9) return; // limite para números de 0 a 9
-    uint8_t segments = DIGITOS[number];
     gpio_set_level(SEG_A, segments & 0b0000001);
     gpio_set_level(SEG_B, segments & 0b0000010);
     gpio_set_level(SEG_C, segments & 0b0000100);
@@ -52,6 +73,61 @@ void show_number_on_display(uint8_t number)
     gpio_set_level(SEG_E, segments & 0b0010000);
     gpio_set_level(SEG_F, segments & 0b0100000);
     gpio_set_level(SEG_G, segments & 0b1000000);
-    gpio_set_level(SEG_DP, 0); // decimal apagado
+    gpio_set_level(SEG_DP, segments & 0b10000000); // Optional decimal point
 }
 
+/**
+ * @brief Display a temperature value (0-999) on a specific display.
+ * @param display Display identifier (DISPLAY_1 or DISPLAY_2).
+ * @param temperature Temperature value to display (0-999).
+ */
+void show_temperature(uint8_t display, int temperature) 
+{
+    if (temperature < 0 || temperature > 999) 
+    {
+        ESP_LOGE("DISPLAY", "Temperature out of range: %d. Only 0-999 supported.", temperature);
+        return;
+    }
+
+    uint8_t hundreds = temperature / 100;   // Get the hundreds digit
+    uint8_t tens = (temperature / 10) % 10; // Get the tens digit
+    uint8_t ones = temperature % 10;       // Get the ones digit
+
+    // Show hundreds digit
+    set_display_state(display, true);
+    set_segments(DIGITOS[hundreds]);
+    vTaskDelay(pdMS_TO_TICKS(5));
+
+    // Show tens digit
+    set_segments(DIGITOS[tens]);
+    vTaskDelay(pdMS_TO_TICKS(5));
+
+    // Show ones digit
+    set_segments(DIGITOS[ones]);
+    vTaskDelay(pdMS_TO_TICKS(5));
+
+    // Turn off display to avoid ghosting
+    set_display_state(display, false);
+}
+
+/**
+ * @brief Update both displays with set and measured temperatures.
+ * @param set_temp Set temperature (from potentiometer).
+ * @param measured_temp Measured temperature (from thermocouple).
+ */
+void update_displays(int set_temp, int measured_temp) 
+{
+    while (true) 
+    {
+        // Display set temperature on DISPLAY_1
+        show_temperature(DISPLAY_1, set_temp);
+
+        // Display measured temperature on DISPLAY_2
+        show_temperature(DISPLAY_2, measured_temp);
+
+        // Adjust delay as necessary
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+}
+
+#endif // DISPLAY_H
